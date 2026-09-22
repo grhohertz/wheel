@@ -12,6 +12,16 @@ from .config import Settings, assert_paper_mode
 from .policy import AdviceConfig, advisor_mode, get_delta_target, get_dte_target, get_mc_overlay
 from .regime import REGIME_OVERLAYS, RegimeOverlay, compare_regimes, overlay_for, regime_scenarios
 from .greeks import Greeks, black_scholes, implied_vol
+from .risk import (
+    DrawdownMonitor,
+    PortfolioConstraints,
+    PortfolioExposure,
+    PositionLimits,
+    RiskAggregator,
+    RiskBreach,
+    RiskReport,
+    Severity,
+)
 from .models import (
     Action,
     EquityPosition,
@@ -36,8 +46,16 @@ __all__ = [
     "get_mc_overlay",
     "overlay_for",
     "regime_scenarios",
+    "DrawdownMonitor",
     "EquityPosition",
     "Greeks",
+    "PortfolioConstraints",
+    "PortfolioExposure",
+    "PositionLimits",
+    "RiskAggregator",
+    "RiskBreach",
+    "RiskReport",
+    "Severity",
     "OptionContract",
     "OptionPosition",
     "Quote",
