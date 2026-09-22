@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -518,7 +519,32 @@ def cmd_live(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_env_file(path: str = ".env") -> None:
+    """Load key=value pairs from a .env file into os.environ.
+    
+    Only sets values that are not already in os.environ (shell env takes
+    precedence). Lines starting with # are ignored; empty lines are skipped.
+    No quote handling — values are used verbatim after stripping whitespace.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        pass  # .env is optional
+
+
 def main(argv: list[str] | None = None) -> int:
+    _load_env_file()  # Load .env before parsing args
     args = build_parser().parse_args(argv)
     return int(args.func(args))
 
