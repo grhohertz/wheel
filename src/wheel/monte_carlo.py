@@ -34,10 +34,14 @@ import math
 import random
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from .config import StrategyParams
 from .greeks import CALL, PUT, black_scholes
 from .marketdata import strike_increment
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .regime import RegimeOverlay
 
 # ----------------------------------------------------------------------
 # constants
@@ -80,6 +84,10 @@ class MonteCarloParams:
     close_dte: int = 21  # calendar DTE at which we close, win or lose
     seed: int = 20240101
     strategy: StrategyParams = field(default_factory=StrategyParams)
+    #: Phase 4: the regime overlay already folded into mu/sigma/iv above.
+    #: ``None`` means these are raw, unconditioned parameters. Set by
+    #: :meth:`wheel.regime.RegimeOverlay.apply` — never by hand.
+    overlay: "RegimeOverlay | None" = None
 
     def __post_init__(self) -> None:
         if self.shares < 0:
@@ -512,7 +520,9 @@ class MonteCarloSummary:
                 "target_delta": p.strategy.target_delta,
                 "profit_target": p.strategy.profit_target,
                 "initial_nav": round(p.initial_nav, 2), "seed": p.seed,
+                "regime": p.overlay.regime if p.overlay else None,
             },
+            "overlay": p.overlay.to_dict() if p.overlay else None,
             "headline": self.headline,
             "metrics": self.metrics,
         }
