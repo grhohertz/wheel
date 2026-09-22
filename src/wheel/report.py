@@ -117,4 +117,82 @@ def render_trades(trades) -> str:
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["BANNER", "render_portfolio", "render_recommendation", "render_scan", "render_trades"]
+def _fmt(value: float, style: str) -> str:
+    """Render one metric cell in the unit that makes it readable."""
+
+    if style == "money":
+        return f"{value:,.0f}"
+    if style == "pct":
+        return f"{value:.2%}"
+    if style == "num":
+        return f"{value:.2f}"
+    return f"{value:.1f}"
+
+
+#: (metric key, row label, formatting style) in display order.
+_MC_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("total_pnl", "Total P&L ($)", "money"),
+    ("return_pct", "Return (%)", "pct"),
+    ("max_drawdown_pct", "Max drawdown (%)", "pct"),
+    ("sharpe", "Sharpe ratio", "num"),
+    ("win_rate", "Cycle win rate (%)", "pct"),
+    ("largest_win", "Largest win ($)", "money"),
+    ("largest_loss", "Largest loss ($)", "money"),
+    ("premium_collected", "Premium collected ($)", "money"),
+    ("final_nav", "Final NAV ($)", "money"),
+    ("final_spot", "Final spot ($)", "num"),
+    ("cycles", "Cycles per path", "count"),
+)
+
+
+def render_monte_carlo(summary: dict) -> str:
+    """Distribution table for a :class:`wheel.monte_carlo.MonteCarloSummary` dict."""
+
+    cfg = summary["config"]
+    head = summary["headline"]
+    m = summary["metrics"]
+
+    lines = [
+        BANNER,
+        "",
+        f"MONTE CARLO — wheel on {cfg['shares']:,} shares of {cfg['symbol']}",
+        f"  paths={cfg['paths']:,}  days={cfg['days']}  seed={cfg['seed']}",
+        f"  spot=${cfg['spot']:,.2f}  mu={cfg['mu']:.1%}  sigma={cfg['sigma']:.1%}  "
+        f"option IV={cfg['option_iv']:.1%}",
+        f"  target delta={cfg['target_delta']:.2f}  entry={cfg['entry_dte']} DTE  "
+        f"exit={cfg['close_dte']} DTE or {cfg['profit_target']:.0%} of credit",
+        f"  initial NAV=${cfg['initial_nav']:,.2f}",
+        "",
+        f"  {'METRIC':<24}{'MEAN':>13}{'STD':>13}{'P10':>13}{'P25':>13}"
+        f"{'P50':>13}{'P75':>13}{'P90':>13}",
+        "  " + "-" * 115,
+    ]
+    for key, label, style in _MC_ROWS:
+        d = m[key]
+        cells = "".join(
+            f"{_fmt(d[c], style):>13}" for c in ("mean", "std", "p10", "p25", "p50", "p75", "p90")
+        )
+        lines.append(f"  {label:<24}{cells}")
+
+    lines += [
+        "",
+        "  Outcome odds:",
+        f"    Probability of profit:      {head['prob_profit']:>8.1%}",
+        f"    Beats buy-and-hold:         {head['prob_beat_buy_hold']:>8.1%}",
+        f"    Buy-and-hold mean P&L:      ${head['buy_hold_mean_pnl']:>12,.0f}",
+        f"    Overall cycle win rate:     {head['overall_cycle_win_rate']:>8.1%}"
+        f"  ({head['total_cycles']:,} cycles)",
+        f"    Mean call-aways per path:   {head['mean_called_away']:>8.2f}",
+        f"    Mean assignments per path:  {head['mean_assignments']:>8.2f}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+__all__ = [
+    "BANNER",
+    "render_monte_carlo",
+    "render_portfolio",
+    "render_recommendation",
+    "render_scan",
+    "render_trades",
+]
