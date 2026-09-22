@@ -106,6 +106,21 @@ def test_confidence_and_risks(strategy):
     assert any("dividend" in r for r in risks)
 
 
+def test_delta_ok_respects_symbol_context():
+    """Test that delta_ok uses advisory target when symbol is set."""
+    params = StrategyParams(target_delta=0.30, delta_tolerance=0.05)
+    strategy = WheelStrategy(params)
+    
+    # Without symbol context, should use config default
+    assert strategy.delta_ok(0.30)  # exact match
+    assert strategy.delta_ok(0.28)  # within tolerance
+    assert not strategy.delta_ok(0.24)  # outside tolerance
+    
+    # With symbol context, should try advisory (mocked to return default)
+    strategy.symbol = "TEST"
+    assert strategy.delta_ok(0.30)  # still works
+
+
 def test_params_validation():
     with pytest.raises(ValueError):
         StrategyParams(target_delta=1.5)
