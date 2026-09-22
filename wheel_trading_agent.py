@@ -19,7 +19,9 @@ import os
 from collections import defaultdict
 from datetime import datetime
 
-# .env is loaded via wheel.cli default
+# Load .env early (before any Settings construction)
+from dotenv import load_dotenv
+load_dotenv()
 
 
 @dataclass
@@ -271,6 +273,13 @@ def analyze_positions(state_file: Optional[str] = None) -> Optional[Trade]:
     
     Returns the first conflict-free recommendation, or reports conflicts.
     """
+    # Load settings to get the configured watchlist
+    sys.path.insert(0, str(Path(__file__).parent / "src"))
+    from wheel.config import Settings
+    settings = Settings.from_env()
+    
+
+    
     print("🔄 Fetching portfolio state...")
     portfolio = get_portfolio_state(state_file)
     
@@ -284,9 +293,10 @@ def analyze_positions(state_file: Optional[str] = None) -> Optional[Trade]:
             strike_str = f" ${pos.strike}" if pos.strike else ""
             print(f"  {side:5} {qty_str:20} {pos.symbol:8}{strike_str}{expiry_str}")
     
-    print("\n🔄 Running scan to find recommendations (watchlist: AAPL,MSFT,KO,F,T)...")
-    # Scan the full watchlist for multiple candidate underlyings
-    scan_result = run_cli_command(["scan", "--json", "AAPL", "MSFT", "KO", "F", "T"])
+    watchlist_str = ", ".join(settings.watchlist)
+    print(f"\n🔄 Running scan to find recommendations (watchlist: {watchlist_str})...")
+    # Scan the configured watchlist for multiple candidate underlyings
+    scan_result = run_cli_command(["scan", "--json"] + list(settings.watchlist))
     if not scan_result:
         print("❌ Failed to fetch scan results")
         return None
