@@ -138,10 +138,24 @@ class MarketData(Protocol):
 ```
 
 `SyntheticMarketData` (deterministic pseudo-random walk, seeded per symbol) is
-the default. To use Schwab quotes/chains, implement that protocol against
-`GET /marketdata/quotes` and `GET /marketdata/chains` and pass the instance to
+the default. `wheel.schwab.SchwabMarketData` implements the same protocol
+against the real Schwab Trader API and is a drop-in swap into
 `WheelEngine(market=...)`. **Nothing else changes** — the broker stays simulated,
 which is exactly the point: real prices, fake fills.
+
+Setup (app registration, OAuth, env vars, troubleshooting):
+**[docs/schwab-setup.md](docs/schwab-setup.md)**.
+
+```bash
+cp .env.example .env            # fill in SCHWAB_APP_KEY / SCHWAB_APP_SECRET
+python3 -m wheel.schwab login   # one-time; refresh token lasts 7 days
+python3 -m wheel.schwab status
+python3 -m wheel.schwab quote GLD
+python3 -m wheel.schwab chain GLD --dte 45
+```
+
+The client is read-only — quotes, chains, and account reads only.
+`SchwabClient.place_order()` raises `LiveTradingDisabled` by design.
 
 `schwab_paper_trader.py` at the repo root is the earlier single-file scaffold,
 superseded by `src/wheel/` and kept only as a reference for the API TODOs.
