@@ -8,6 +8,7 @@ Everything in this package is SIMULATED. No module here places a live order;
 :func:`wheel.config.assert_paper_mode` hard-fails any non-paper configuration.
 """
 
+from .advisor import Advisor, AdviceConfig
 from .config import Settings, assert_paper_mode
 from .greeks import Greeks, black_scholes, implied_vol
 from .models import (
@@ -24,6 +25,8 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Action",
+    "Advisor",
+    "AdviceConfig",
     "EquityPosition",
     "Greeks",
     "OptionContract",
