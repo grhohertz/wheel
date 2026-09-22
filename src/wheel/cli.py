@@ -26,6 +26,9 @@ from .greeks import black_scholes, year_fraction
 from .marketdata import SyntheticMarketData
 from .monte_carlo import GLD_DRIFT, GLD_VOL, MonteCarloParams, run_monte_carlo
 from .report import BANNER, render_monte_carlo, render_portfolio, render_scan, render_trades
+from .audit import AuditLedger
+from .client import ClaudeAdvisor
+from .features import build_feature_vector
 
 
 def _as_of(value: str | None) -> date:
@@ -278,7 +281,84 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--close-dte", type=int, default=21, dest="close_dte", help="DTE exit window")
     mc.add_argument("--seed", type=int, default=20240101, help="RNG seed (runs are reproducible)")
     mc.set_defaults(func=cmd_monte_carlo)
+
+    adv = add("advisor", "Refresh advisory cache (Claude recommendations)")
+    adv.add_argument("symbols", nargs="*", help="symbols to advise (default: watchlist)")
+    adv.add_argument("--force", action="store_true", help="ignore cache, call Claude")
+    adv.set_defaults(func=cmd_advisor)
+
     return p
+
+
+def cmd_advisor(args: argparse.Namespace) -> int:
+    """Refresh advisory cache. Calls Claude if cache miss or --force."""
+    try:
+        advisor = ClaudeAdvisor()
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    engine, settings, state = build_engine(args)
+    symbols = _symbols(args, settings) or list(settings.watchlist)
+
+    ledger = AuditLedger()
+    results = []
+
+    for symbol in symbols:
+        print(f"{symbol}...", end=" ", flush=True)
+
+        # Build feature vector from market data
+        # TODO: fetch real market data (IV, prices, etc.)
+        # For now, stub with synthetic data
+        market = engine.market
+        bid, ask = market.option_quote(symbol, 185, 35, "P")
+        spot = market.price(symbol)
+
+        fv = build_feature_vector(
+            symbol=symbol,
+            price=spot,
+            iv_30d=0.28,  # placeholder
+            iv_60d=0.30,
+            iv_52w_low=0.15,
+            iv_52w_high=0.45,
+            rv_20d=0.22,
+            rv_60d=0.24,
+            skew_put_call=-0.05,
+            shares_held=0,
+            csp_open_count=0,
+            ccall_open_count=0,
+            avg_cost_per_share=0,
+            cash_available=settings.starting_cash,
+            collateral_used_pct=0.0,
+            days_in_position_avg=0,
+            dte_to_next_earnings=None,
+            change_1d_pct=0.01,
+            change_5d_pct=0.02,
+            change_30d_pct=0.05,
+            atr_20d=0.18,
+        )
+
+        result = advisor.advise(fv, force_refresh=args.force)
+        results.append({symbol: result})
+        status = "cache" if result.get("from_cache") else "fresh"
+        print(f"✓ ({status})")
+
+    if args.json:
+        print(json.dumps(results, indent=2))
+    else:
+        stats = ledger.stats()
+        print(f"\nAdvisor stats:")
+        print(f"  Total calls: {stats['total_calls']}")
+        print(f"  Total cost: ${stats['total_cost_usd']:.2f}")
+        for r in results:
+            for symbol, advice in r.items():
+                print(f"\n{symbol}:")
+                print(f"  Put delta:  {advice['put_delta_target']:.2f}")
+                print(f"  Call delta: {advice['call_delta_target']:.2f}")
+                print(f"  DTE target: {advice['dte_target']}")
+                print(f"  Rationale: {advice['rationale']}")
+
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
