@@ -23,7 +23,7 @@ class LiveTradingDisabled(RuntimeError):
 class StrategyParams:
     """Tunable knobs for the wheel."""
 
-    target_delta: float = 0.30
+    target_delta: float = 0.25  # aggressive: sell further OTM for better risk-adjusted returns
     delta_tolerance: float = 0.15
     min_dte: int = 30
     max_dte: int = 45

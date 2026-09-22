@@ -6,6 +6,7 @@
     python -m wheel.cli ledger
     python -m wheel.cli price AAPL --strike 190 --dte 35
     python -m wheel.cli reset --cash 100000
+    python -m wheel.cli monte-carlo --shares 800 --symbol GLD --paths 1000 --days 252
 
 Every command runs against the local paper account JSON (``--state``).
 """
@@ -23,7 +24,11 @@ from .config import PAPER, Settings, assert_paper_mode
 from .engine import WheelEngine
 from .greeks import black_scholes, year_fraction
 from .marketdata import SyntheticMarketData
-from .report import BANNER, render_portfolio, render_scan, render_trades
+from .monte_carlo import GLD_DRIFT, GLD_VOL, MonteCarloParams, run_monte_carlo
+from .report import BANNER, render_monte_carlo, render_portfolio, render_scan, render_trades
+from .audit import AuditLedger
+from .client import ClaudeAdvisor
+from .features import build_feature_vector
 
 
 def _as_of(value: str | None) -> date:
@@ -165,6 +170,38 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_monte_carlo(args: argparse.Namespace) -> int:
+    """Distribution of wheel outcomes over thousands of simulated years.
+
+    Spot and IV default to the engine's market-data quote for the symbol (same
+    source ``price`` and ``scan`` use) so the simulation starts from the book the
+    rest of the CLI sees; ``--spot`` / ``--iv`` override either one.
+    """
+
+    engine, _, _ = build_engine(args)
+    quote = engine.market.get_quote(args.symbol, _as_of(args.date))
+    params = MonteCarloParams(
+        symbol=args.symbol.upper(),
+        shares=args.shares,
+        paths=args.paths,
+        days=args.days,
+        spot=args.spot if args.spot else quote.price,
+        mu=args.mu,
+        sigma=args.sigma,
+        iv=args.iv,
+        rate=args.rate,
+        div_yield=quote.div_yield if args.div_yield is None else args.div_yield,
+        entry_dte=args.entry_dte,
+        close_dte=args.close_dte,
+        seed=args.seed,
+        strategy=engine.params,
+    )
+    summary = run_monte_carlo(params).to_dict()
+    print(json.dumps(summary, indent=2) if args.json else render_monte_carlo(summary))
+    return 0
+
+
+
 def _add_common(parser: argparse.ArgumentParser, *, suppress: bool) -> None:
     """Global flags, accepted before OR after the subcommand.
 
@@ -228,7 +265,100 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--days", type=int, default=8, help="number of cycles")
     sim.add_argument("--step", type=int, default=7, help="calendar days per cycle")
     sim.set_defaults(func=cmd_simulate)
+
+    mc = add("monte-carlo", "Monte Carlo distribution of wheel outcomes")
+    mc.add_argument("--symbol", default="GLD", help="underlying to simulate")
+    mc.add_argument("--shares", type=int, default=800, help="shares held at t=0")
+    mc.add_argument("--paths", type=int, default=1000, help="number of simulated years")
+    mc.add_argument("--days", type=int, default=252, help="trading days per path")
+    mc.add_argument("--spot", type=float, help="starting price (default: market quote)")
+    mc.add_argument("--mu", type=float, default=GLD_DRIFT, help="annual drift (total return)")
+    mc.add_argument("--sigma", type=float, default=GLD_VOL, help="annual realised volatility")
+    mc.add_argument("--iv", type=float, help="option IV (default: sigma + vol risk premium)")
+    mc.add_argument("--rate", type=float, default=0.04, help="risk-free rate")
+    mc.add_argument("--div-yield", type=float, dest="div_yield", help="dividend yield override")
+    mc.add_argument("--entry-dte", type=int, default=35, dest="entry_dte", help="DTE at entry")
+    mc.add_argument("--close-dte", type=int, default=21, dest="close_dte", help="DTE exit window")
+    mc.add_argument("--seed", type=int, default=20240101, help="RNG seed (runs are reproducible)")
+    mc.set_defaults(func=cmd_monte_carlo)
+
+    adv = add("advisor", "Refresh advisory cache (Claude recommendations)")
+    adv.add_argument("symbols", nargs="*", help="symbols to advise (default: watchlist)")
+    adv.add_argument("--force", action="store_true", help="ignore cache, call Claude")
+    adv.set_defaults(func=cmd_advisor)
+
     return p
+
+
+def cmd_advisor(args: argparse.Namespace) -> int:
+    """Refresh advisory cache. Calls Claude if cache miss or --force."""
+    try:
+        advisor = ClaudeAdvisor()
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    engine, settings, state = build_engine(args)
+    symbols = _symbols(args, settings) or list(settings.watchlist)
+
+    ledger = AuditLedger()
+    results = []
+
+    for symbol in symbols:
+        print(f"{symbol}...", end=" ", flush=True)
+
+        # Build feature vector from market data
+        # TODO: fetch real market data (IV, prices, etc.)
+        # For now, stub with synthetic data
+        market = engine.market
+        bid, ask = market.option_quote(symbol, 185, 35, "P")
+        spot = market.price(symbol)
+
+        fv = build_feature_vector(
+            symbol=symbol,
+            price=spot,
+            iv_30d=0.28,  # placeholder
+            iv_60d=0.30,
+            iv_52w_low=0.15,
+            iv_52w_high=0.45,
+            rv_20d=0.22,
+            rv_60d=0.24,
+            skew_put_call=-0.05,
+            shares_held=0,
+            csp_open_count=0,
+            ccall_open_count=0,
+            avg_cost_per_share=0,
+            cash_available=settings.starting_cash,
+            collateral_used_pct=0.0,
+            days_in_position_avg=0,
+            dte_to_next_earnings=None,
+            change_1d_pct=0.01,
+            change_5d_pct=0.02,
+            change_30d_pct=0.05,
+            atr_20d=0.18,
+        )
+
+        result = advisor.advise(fv, force_refresh=args.force)
+        results.append({symbol: result})
+        status = "cache" if result.get("from_cache") else "fresh"
+        print(f"✓ ({status})")
+
+    if args.json:
+        print(json.dumps(results, indent=2))
+    else:
+        stats = ledger.stats()
+        print(f"\nAdvisor stats:")
+        print(f"  Total calls: {stats['total_calls']}")
+        print(f"  Total cost: ${stats['total_cost_usd']:.2f}")
+        for r in results:
+            for symbol, advice in r.items():
+                print(f"\n{symbol}:")
+                print(f"  Put delta:  {advice['put_delta_target']:.2f}")
+                print(f"  Call delta: {advice['call_delta_target']:.2f}")
+                print(f"  DTE target: {advice['dte_target']}")
+                print(f"  Rationale: {advice['rationale']}")
+
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

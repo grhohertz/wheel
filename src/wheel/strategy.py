@@ -16,12 +16,17 @@ Management rules:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
+from typing import Optional
 
 from .config import StrategyParams
 from .greeks import CALL, PUT, Greeks
 from .models import Action, OptionContract, OptionPosition, Quote
+from .policy import get_delta_target
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -51,8 +56,9 @@ class ManagementDecision:
 class WheelStrategy:
     """Stateless selector/manager — all state lives in the broker."""
 
-    def __init__(self, params: StrategyParams | None = None) -> None:
+    def __init__(self, params: StrategyParams | None = None, symbol: Optional[str] = None) -> None:
         self.params = params or StrategyParams()
+        self.symbol = symbol  # for policy layer (advisory) lookups
 
     # ------------------------------------------------------------------
     # filters
@@ -69,9 +75,26 @@ class WheelStrategy:
         dte = (contract.expiry - as_of).days
         return self.params.min_dte <= dte <= self.params.max_dte
 
-    def delta_ok(self, delta: float) -> bool:
+    def delta_ok(self, delta: float, leg: str = "csp") -> bool:
+        """Check if delta is within tolerance of target.
+
+        Uses advisory layer if available; falls back to config target_delta.
+
+        Args:
+            delta: option delta
+            leg: "csp" (put) or "ccall" (covered call)
+
+        Returns:
+            True if abs(delta) is within tolerance of the target.
+        """
         p = self.params
-        return abs(abs(delta) - p.target_delta) <= p.delta_tolerance
+        # Use policy layer to get advisory target (if available)
+        if self.symbol:
+            target = get_delta_target(self.symbol, leg=leg, default=p.target_delta)
+        else:
+            target = p.target_delta
+
+        return abs(abs(delta) - target) <= p.delta_tolerance
 
     # ------------------------------------------------------------------
     # selection
@@ -87,6 +110,9 @@ class WheelStrategy:
     ) -> list[Candidate]:
         p = self.params
         out: list[Candidate] = []
+        # Determine leg type for advisory lookup
+        leg = "csp" if right == PUT else "ccall"
+
         for c in chain:
             if c.right.upper() != right:
                 continue
@@ -97,7 +123,7 @@ class WheelStrategy:
             if max_strike is not None and c.strike > max_strike + 1e-9:
                 continue
             g = c.greeks(quote.price, p.risk_free_rate, quote.div_yield)
-            if not self.delta_ok(g.delta):
+            if not self.delta_ok(g.delta, leg=leg):
                 continue
             dte = max((c.expiry - as_of).days, 1)
             credit = c.mid * p.contract_multiplier

@@ -87,6 +87,8 @@ class WheelEngine:
             quote = self.market.get_quote(symbol, as_of)
             chain = self.market.get_chain(symbol, as_of)
             open_shorts = self.broker.open_short_options(symbol)
+            # Set symbol context for advisory-driven delta targets
+            self.strategy.symbol = symbol
 
             if open_shorts:
                 for pos in open_shorts:
