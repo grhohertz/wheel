@@ -52,6 +52,57 @@ Global flags: `--state PATH` (account JSON), `--date YYYY-MM-DD` (as-of), `--jso
 
 ---
 
+## Trading Agent (Portfolio-Aware Recommendation)
+
+`wheel_trading_agent.py` is a standalone agent that runs the scanner, detects **portfolio conflicts**, and selects the best conflict-free trade recommendation.
+
+```bash
+# Use the paper account from state/paper_account.json
+python3 wheel_trading_agent.py
+
+# Or specify a test scenario
+python3 wheel_trading_agent.py --state state/test_conflict_aapl.json
+```
+
+### How it works
+
+1. **Load portfolio** — read the account state (equities, options)
+2. **Scan watchlist** — fetch 5+ candidates with yield, collateral, confidence scores
+3. **Validate each** — check for wheel-on-wheel conflicts:
+   - **Conflict detected:** Already have a short call on AAPL? Selling a put on AAPL creates conflicting wheel-on-wheel. ❌
+   - **No conflict:** MSFT isn't in portfolio → trade is valid. ✅
+4. **Fallback logic** — if the top pick conflicts, fall through to the next valid trade
+5. **Report** — JSON + human-readable summary with risk score, expected return, and any conflicts
+
+### Portfolio Conflicts
+
+The agent prevents **wheel-on-wheel conflicts**: a short put and short call on the same underlying while holding the equity. This violates the wheel's 1-contract-at-a-time assumption.
+
+Example validation matrix:
+
+| State | Top Pick | Decision |
+|-------|----------|----------|
+| LONG 100 GLD + SHORT call GLD | SELL_PUT GLD | ❌ Conflict → FALLBACK |
+| LONG 100 AAPL + SHORT call AAPL | SELL_PUT MSFT | ✅ Valid → ACCEPT |
+| (empty) | SELL_PUT AAPL | ✅ Valid → ACCEPT |
+
+### Output format
+
+```json
+{
+  "valid": true,
+  "recommendation": "SELL_CASH_SECURED_PUT",
+  "underlying": "MSFT",
+  "action": "SELL_CASH_SECURED_PUT MSFT @ $47.5 strike",
+  "rationale": "sell 6x 2026-10-23 $47.5 put @ $0.42 (31 DTE, |delta|=0.26, 10.5% annualized)",
+  "risk_score": 3,
+  "expected_return": 0.1053,
+  "conflicts": []
+}
+```
+
+---
+
 ## Layout
 
 ```
