@@ -25,7 +25,15 @@ from .engine import WheelEngine
 from .greeks import black_scholes, year_fraction
 from .marketdata import SyntheticMarketData
 from .monte_carlo import GLD_DRIFT, GLD_VOL, MonteCarloParams, run_monte_carlo
-from .report import BANNER, render_monte_carlo, render_portfolio, render_scan, render_trades
+from .regime import REGIMES, compare_regimes, overlay_for
+from .report import (
+    BANNER,
+    render_monte_carlo,
+    render_portfolio,
+    render_regime_matrix,
+    render_scan,
+    render_trades,
+)
 from .audit import AuditLedger
 from .client import ClaudeAdvisor
 from .features import build_feature_vector
@@ -178,9 +186,21 @@ def cmd_monte_carlo(args: argparse.Namespace) -> int:
     rest of the CLI sees; ``--spot`` / ``--iv`` override either one.
     """
 
+    params = _mc_params(args)
+    regime = getattr(args, "regime", None)
+    if regime:
+        params = overlay_for(regime).apply(params)
+    summary = run_monte_carlo(params).to_dict()
+    print(json.dumps(summary, indent=2) if args.json else render_monte_carlo(summary))
+    return 0
+
+
+def _mc_params(args: argparse.Namespace) -> MonteCarloParams:
+    """Build simulation parameters from the shared Monte-Carlo flags."""
+
     engine, _, _ = build_engine(args)
     quote = engine.market.get_quote(args.symbol, _as_of(args.date))
-    params = MonteCarloParams(
+    return MonteCarloParams(
         symbol=args.symbol.upper(),
         shares=args.shares,
         paths=args.paths,
@@ -196,8 +216,36 @@ def cmd_monte_carlo(args: argparse.Namespace) -> int:
         seed=args.seed,
         strategy=engine.params,
     )
-    summary = run_monte_carlo(params).to_dict()
-    print(json.dumps(summary, indent=2) if args.json else render_monte_carlo(summary))
+
+
+def cmd_regime(args: argparse.Namespace) -> int:
+    """Phase 4 stress matrix: the same wheel, run under every volatility regime.
+
+    One seed is held across all regimes, so each row differs only by the regime
+    overlay applied to drift, realised vol, option IV, delta and DTE. No live
+    market data is required — this answers "what does this position do when the
+    world changes shape" entirely offline.
+    """
+
+    labels = [r.strip().lower() for r in args.regimes.split(",") if r.strip()]
+    if labels == ["all"] or not labels:
+        labels = list(REGIMES)
+
+    unknown = [r for r in labels if r not in REGIMES]
+    if unknown:
+        print(
+            f"error: unknown regime(s) {', '.join(unknown)}; "
+            f"choose from {', '.join(REGIMES)} or 'all'",
+            file=sys.stderr,
+        )
+        return 1
+
+    comparison = compare_regimes(_mc_params(args), labels)
+    print(
+        json.dumps(comparison, indent=2)
+        if args.json
+        else render_regime_matrix(comparison)
+    )
     return 0
 
 
@@ -280,7 +328,33 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--entry-dte", type=int, default=35, dest="entry_dte", help="DTE at entry")
     mc.add_argument("--close-dte", type=int, default=21, dest="close_dte", help="DTE exit window")
     mc.add_argument("--seed", type=int, default=20240101, help="RNG seed (runs are reproducible)")
+    mc.add_argument(
+        "--regime",
+        choices=list(REGIMES),
+        help="condition the simulation on a volatility regime (Phase 4 overlay)",
+    )
     mc.set_defaults(func=cmd_monte_carlo)
+
+    reg = add("regime", "stress matrix: the same wheel under every volatility regime")
+    reg.add_argument("--symbol", default="GLD", help="underlying to simulate")
+    reg.add_argument("--shares", type=int, default=800, help="shares held at t=0")
+    reg.add_argument("--paths", type=int, default=1000, help="number of simulated years")
+    reg.add_argument("--days", type=int, default=252, help="trading days per path")
+    reg.add_argument("--spot", type=float, help="starting price (default: market quote)")
+    reg.add_argument("--mu", type=float, default=GLD_DRIFT, help="baseline annual drift")
+    reg.add_argument("--sigma", type=float, default=GLD_VOL, help="baseline annual vol")
+    reg.add_argument("--iv", type=float, help="baseline option IV (default: sigma + VRP)")
+    reg.add_argument("--rate", type=float, default=0.04, help="risk-free rate")
+    reg.add_argument("--div-yield", type=float, dest="div_yield", help="dividend yield override")
+    reg.add_argument("--entry-dte", type=int, default=35, dest="entry_dte", help="DTE at entry")
+    reg.add_argument("--close-dte", type=int, default=21, dest="close_dte", help="DTE exit window")
+    reg.add_argument("--seed", type=int, default=20240101, help="RNG seed (held across regimes)")
+    reg.add_argument(
+        "--regimes",
+        default="all",
+        help="comma-separated regimes to compare, or 'all' (default)",
+    )
+    reg.set_defaults(func=cmd_regime)
 
     adv = add("advisor", "Refresh advisory cache (Claude recommendations)")
     adv.add_argument("symbols", nargs="*", help="symbols to advise (default: watchlist)")

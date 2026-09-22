@@ -8,8 +8,9 @@ Everything in this package is SIMULATED. No module here places a live order;
 :func:`wheel.config.assert_paper_mode` hard-fails any non-paper configuration.
 """
 
-from .advisor import Advisor, AdviceConfig
 from .config import Settings, assert_paper_mode
+from .policy import AdviceConfig, advisor_mode, get_delta_target, get_dte_target, get_mc_overlay
+from .regime import REGIME_OVERLAYS, RegimeOverlay, compare_regimes, overlay_for, regime_scenarios
 from .greeks import Greeks, black_scholes, implied_vol
 from .models import (
     Action,
@@ -25,8 +26,16 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Action",
-    "Advisor",
     "AdviceConfig",
+    "REGIME_OVERLAYS",
+    "RegimeOverlay",
+    "advisor_mode",
+    "compare_regimes",
+    "get_delta_target",
+    "get_dte_target",
+    "get_mc_overlay",
+    "overlay_for",
+    "regime_scenarios",
     "EquityPosition",
     "Greeks",
     "OptionContract",

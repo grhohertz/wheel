@@ -188,9 +188,77 @@ def render_monte_carlo(summary: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_regime_matrix(comparison: dict) -> str:
+    """Stress matrix for :func:`wheel.regime.compare_regimes`.
+
+    One row per regime, same seed throughout, so every column difference is
+    caused by the regime overlay rather than path noise.
+    """
+
+    base = comparison["baseline"]
+    rows = comparison["rows"]
+
+    lines = [
+        BANNER,
+        "",
+        f"REGIME MATRIX — wheel on {base['shares']:,} shares of {base['symbol']}",
+        f"  paths={base['paths']:,}  days={base['days']}  seed={base['seed']}  "
+        f"spot=${base['spot']:,.2f}",
+        f"  baseline mu={base['mu']:.1%}  sigma={base['sigma']:.1%}  "
+        f"option IV={base['option_iv']:.1%}",
+        f"  initial NAV=${base['initial_nav']:,.2f}",
+        "",
+        f"  {'REGIME':<12}{'SIGMA':>8}{'IV':>8}{'MU':>8}{'DELTA':>7}{'DTE':>5}"
+        f"{'MEAN P&L':>12}{'P10':>12}{'P90':>12}{'PREMIUM':>11}"
+        f"{'DD':>8}{'P(PROFIT)':>11}{'ASSIGN':>8}",
+        "  " + "-" * 122,
+    ]
+
+    for row in rows:
+        i, o = row["inputs"], row["outcome"]
+        lines.append(
+            f"  {row['regime']:<12}"
+            f"{i['sigma']:>7.1%}{i['option_iv']:>8.1%}{i['mu']:>8.1%}"
+            f"{i['target_delta']:>7.2f}{i['entry_dte']:>5d}"
+            f"{o['mean_pnl']:>12,.0f}{o['p10_pnl']:>12,.0f}{o['p90_pnl']:>12,.0f}"
+            f"{o['mean_premium']:>11,.0f}"
+            f"{o['mean_max_drawdown_pct']:>7.1%}{o['prob_profit']:>11.1%}"
+            f"{o['mean_assignments']:>8.2f}"
+        )
+
+    lines += ["", "  Why each regime moves the numbers:"]
+    for row in rows:
+        overlay = row["overlay"]
+        if not overlay.get("rationale"):
+            continue
+        lines.append(f"    {row['regime']}:")
+        for chunk in _wrap(overlay["rationale"], 100):
+            lines.append(f"      {chunk}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    """Greedy word wrap — keeps the rationale readable without importing textwrap."""
+
+    out: list[str] = []
+    line = ""
+    for word in text.split():
+        candidate = f"{line} {word}".strip()
+        if len(candidate) > width and line:
+            out.append(line)
+            line = word
+        else:
+            line = candidate
+    if line:
+        out.append(line)
+    return out
+
+
 __all__ = [
     "BANNER",
     "render_monte_carlo",
+    "render_regime_matrix",
     "render_portfolio",
     "render_recommendation",
     "render_scan",
