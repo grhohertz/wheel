@@ -7,6 +7,7 @@
     python -m wheel.cli price AAPL --strike 190 --dte 35
     python -m wheel.cli reset --cash 100000
     python -m wheel.cli monte-carlo --shares 800 --symbol GLD --paths 1000 --days 252
+    python -m wheel.cli live --symbol GLD --shares 800 --duration 60
 
 Every command runs against the local paper account JSON (``--state``).
 """
@@ -23,6 +24,7 @@ from .broker import PaperBroker
 from .config import PAPER, Settings, assert_paper_mode
 from .engine import WheelEngine
 from .greeks import black_scholes, year_fraction
+from .live import build_paper_engine
 from .marketdata import SyntheticMarketData
 from .monte_carlo import GLD_DRIFT, GLD_VOL, MonteCarloParams, run_monte_carlo
 from .regime import REGIMES, compare_regimes, overlay_for
@@ -361,6 +363,20 @@ def build_parser() -> argparse.ArgumentParser:
     adv.add_argument("--force", action="store_true", help="ignore cache, call Claude")
     adv.set_defaults(func=cmd_advisor)
 
+    lv = add("live", "paper live-loop demo: feed -> signal -> risk -> simulated fills")
+    lv.add_argument("--symbol", default="GLD", help="underlying to stream")
+    lv.add_argument("--shares", type=int, default=800, help="starting share position")
+    lv.add_argument("--duration", type=float, default=60.0, help="seconds of tape to replay")
+    lv.add_argument("--interval", type=float, default=1.0, help="seconds per tick")
+    lv.add_argument("--spot", type=float, help="starting price (default: market quote)")
+    lv.add_argument("--band", type=float, default=0.004, help="signal trigger band around anchor")
+    lv.add_argument("--qty", type=int, default=100, help="shares per clip")
+    lv.add_argument("--max-position", type=int, default=800, dest="max_position")
+    lv.add_argument("--slippage", type=float, default=0.0, help="market-order slippage fraction")
+    lv.add_argument("--seed", type=int, default=20240101, help="tick-path seed (reproducible)")
+    lv.add_argument("--realtime", action="store_true", help="actually sleep between ticks")
+    lv.set_defaults(func=cmd_live)
+
     return p
 
 
@@ -432,6 +448,73 @@ def cmd_advisor(args: argparse.Namespace) -> int:
                 print(f"  DTE target: {advice['dte_target']}")
                 print(f"  Rationale: {advice['rationale']}")
 
+    return 0
+
+
+def cmd_live(args: argparse.Namespace) -> int:
+    """Replay a synthetic tape through the paper live loop.
+
+    ``--duration`` is *simulated* seconds at ``--interval`` per tick, so the
+    60-second demo returns immediately unless ``--realtime`` is passed.
+    """
+
+    settings = Settings.from_env()
+    assert_paper_mode(settings.mode)
+    symbol = args.symbol.upper()
+    interval = max(0.01, args.interval)
+    ticks = max(1, int(round(args.duration / interval)))
+
+    if args.spot:
+        spot = float(args.spot)
+    else:
+        market = SyntheticMarketData(rate=settings.params.risk_free_rate)
+        spot = market.get_quote(symbol, _as_of(args.date)).price
+
+    engine = build_paper_engine(
+        symbol,
+        start_price=spot,
+        ticks=ticks,
+        seed=args.seed,
+        band=args.band,
+        qty=args.qty,
+        max_position=args.max_position,
+        shares=args.shares,
+        slippage_pct=args.slippage,
+    )
+    engine.run_loop(interval=interval if args.realtime else 0.0)
+
+    report = engine.report()
+    report["symbol"] = symbol
+    report["anchor"] = round(spot, 4)
+    report["ticks_planned"] = ticks
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+
+    m = engine.metrics
+    fills = report["fills"]
+    print(BANNER)
+    print(f"live (PAPER) {symbol}  anchor {spot:,.2f}  {ticks} ticks @ {interval:g}s")
+    print("-" * 60)
+    for label, value in (
+        ("ticks", m.ticks),
+        ("signals", m.signals),
+        ("orders submitted", m.orders_submitted),
+        ("orders rejected", m.orders_rejected),
+        ("risk rejections", m.risk_rejections),
+        ("fills", m.fills),
+        ("shares filled", m.filled_qty),
+        ("dropped ticks", m.dropped_ticks),
+    ):
+        print(f"  {label:<18} {value:>10,}")
+    print("-" * 60)
+    print(f"  {'position':<18} {engine.position(symbol):>10,}")
+    print(f"  {'fill VWAP':<18} {fills['avg_price']:>10,.4f}")
+    print(f"  {'traded notional':<18} {fills['notional']:>10,.2f}")
+    print(f"  {'realised slippage':<18} "
+          f"{engine.tracker.realized_slippage(symbol, spot):>10,.4f}")
+    if report["open_orders"]:
+        print(f"  {'open orders':<18} {len(report['open_orders']):>10,}")
     return 0
 
 

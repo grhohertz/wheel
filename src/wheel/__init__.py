@@ -12,6 +12,19 @@ from .config import Settings, assert_paper_mode
 from .policy import AdviceConfig, advisor_mode, get_delta_target, get_dte_target, get_mc_overlay
 from .regime import REGIME_OVERLAYS, RegimeOverlay, compare_regimes, overlay_for, regime_scenarios
 from .greeks import Greeks, black_scholes, implied_vol
+from .feeds import FeedManager, MarketFeed, PaperFeed
+from .feeds import Quote as TickQuote
+from .execution import (
+    ExecutionClient,
+    Fill,
+    FillTracker,
+    Order,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PaperExecutionClient,
+)
+from .live import LiveEngine, LiveMetrics, band_signal, check_live_trading_disabled
 from .risk import (
     DrawdownMonitor,
     PortfolioConstraints,
@@ -48,6 +61,22 @@ __all__ = [
     "regime_scenarios",
     "DrawdownMonitor",
     "EquityPosition",
+    "ExecutionClient",
+    "FeedManager",
+    "Fill",
+    "FillTracker",
+    "LiveEngine",
+    "LiveMetrics",
+    "MarketFeed",
+    "Order",
+    "OrderSide",
+    "OrderStatus",
+    "OrderType",
+    "PaperExecutionClient",
+    "PaperFeed",
+    "TickQuote",
+    "band_signal",
+    "check_live_trading_disabled",
     "Greeks",
     "PortfolioConstraints",
     "PortfolioExposure",
