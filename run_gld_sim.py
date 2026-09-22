@@ -35,9 +35,15 @@ gld_position = EquityPosition(
 )
 broker.equities["GLD"] = gld_position
 
-# Setup engine with relaxed delta filter for synthetic data
-# Use wide delta tolerance to catch any viable call from the synthetic market
-params = StrategyParams(target_delta=0.30, delta_tolerance=0.25)
+# Setup engine with VERY relaxed filters to work with synthetic data
+# DTE: accept even 4 DTE to match synthetic chain (normally 30-45)
+# Delta: wide tolerance (normally 0.30±0.25 = 0.05-0.55)
+params = StrategyParams(
+    target_delta=0.30, 
+    delta_tolerance=0.28,  # Catches 0.02-0.58 (includes 0.491 delta)
+    min_dte=1,
+    max_dte=200,
+)
 market = SyntheticMarketData(rate=0.05)
 engine = WheelEngine(market, broker, params, settings)
 
@@ -72,7 +78,16 @@ for i in range(13):
         chain = engine.market.get_chain("GLD", day)
         print(f"  Chain has {len(chain)} contracts")
         if chain:
-            print(f"    Sample: {chain[0]}")
+            calls = [c for c in chain if c.right == 'C']
+            otm_calls = [c for c in calls if c.strike >= 47.36]
+            print(f"    Calls: {len(calls)}, OTM: {len(otm_calls)}")
+            if otm_calls:
+                for c in otm_calls[:3]:
+                    dte = (c.expiry - day).days
+                    g = c.greeks(47.36, 0.04, 0.0)
+                    print(f"      {c.symbol} ({dte} DTE @${c.strike}): delta={g.delta:.3f}")
+            else:
+                print("    No OTM calls found!")
     
     result = engine.run_cycle(["GLD"], day, execute=True)
     acted = len(result.trades) + len(result.settlements)
