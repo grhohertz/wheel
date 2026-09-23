@@ -504,6 +504,35 @@ class SchwabClient:
             params["toDate"] = to_date.isoformat()
         return self._get(f"{MARKETDATA_BASE}/chains?{urllib.parse.urlencode(params)}")
 
+    def pricehistory_raw(
+        self,
+        symbol: str,
+        period_type: str = "year",
+        period: int = 1,
+        frequency_type: str = "daily",
+        frequency: int = 1,
+    ) -> dict:
+        """Fetch price history for adaptive delta targeting (MAs, volatility).
+        
+        Args:
+            symbol: stock ticker
+            period_type: 'day' | 'month' | 'year' | 'ytd'
+            period: number of periods (e.g. 1 year)
+            frequency_type: 'minute' | 'daily' | 'weekly' | 'monthly'
+            frequency: number of frequency units (e.g. 1 daily)
+        
+        Returns:
+            dict with 'candles' key: list of {open, high, low, close, volume, datetime}
+        """
+        params: dict[str, str] = {
+            "symbol": symbol.upper(),
+            "periodType": period_type,
+            "period": str(period),
+            "frequencyType": frequency_type,
+            "frequency": str(frequency),
+        }
+        return self._get(f"{MARKETDATA_BASE}/pricehistory?{urllib.parse.urlencode(params)}")
+
     # -- trader (read-only) --------------------------------------------- #
     def account_numbers(self) -> list[dict]:
         return self._get(f"{TRADER_BASE}/accounts/accountNumbers")

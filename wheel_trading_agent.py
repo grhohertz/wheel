@@ -17,7 +17,7 @@ from typing import Optional
 from pathlib import Path
 import os
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 # Load .env early (before any Settings construction)
 from dotenv import load_dotenv
@@ -524,21 +524,41 @@ def check_expiring_calls(portfolio: Portfolio, policy: DeltaPolicy = DeltaPolicy
         target_delta = 0.30
         delta_explain = {}
         
-        # Build RollContext for adaptive delta targeting
-        # TODO: fetch IV rank, 50/200 MAs, and earnings calendar from market data
-        # For now: use base 0.30 delta (when iv_rank=None, no adjustments are applied)
+        # Build RollContext with market data for adaptive delta targeting
         ctx = RollContext(
-            spot=old_strike,  # Fallback; ideally fetch current price via Schwab
+            spot=get_current_price(symbol) or old_strike,
             cost_basis=cost_basis,
-            iv_rank=None,  # Would fetch from historical IV percentile (252d)
-            ma50=None,     # Would fetch from price history
-            ma200=None,    # Would fetch from price history
-            earnings_in_window=False,  # Would check earnings calendar
+            iv_rank=None,  # Fetch below via market data
+            ma50=None,
+            ma200=None,
+            earnings_in_window=False,
             want_exit=False,
             portfolio_delta_excess=None,
         )
         
-        # Compute adaptive target delta
+        # Fetch market data (IV rank, MAs, earnings)
+        try:
+            sys.path.insert(0, str(Path(__file__).parent / "src"))
+            from wheel.schwab import SchwabCredentials, SchwabAuth, SchwabClient
+            from wheel.market_analytics import fetch_market_context
+            
+            creds = SchwabCredentials.from_env()
+            auth = SchwabAuth(creds)
+            client = SchwabClient(auth)
+            
+            market_ctx = fetch_market_context(client, symbol)
+            
+            # Update RollContext with real market data
+            ctx.spot = market_ctx.get("current_price", ctx.spot)
+            ctx.iv_rank = market_ctx.get("iv_rank")
+            ctx.ma50 = market_ctx.get("ma50")
+            ctx.ma200 = market_ctx.get("ma200")
+            ctx.earnings_in_window = market_ctx.get("earnings_in_window", False)
+        except Exception as e:
+            # Graceful degradation: use fallback values
+            pass
+        
+        # Compute adaptive target delta with market context
         target_delta, delta_explain = compute_target_delta(ctx, policy)
         
         if calls:
