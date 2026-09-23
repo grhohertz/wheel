@@ -120,6 +120,7 @@ class Trade:
     expected_return: float  # percentage
     conflicts: list[str] = field(default_factory=list)
     valid: bool = True
+    roll_metadata: Optional[dict] = None  # metadata for roll executor
 
 
 @dataclass(frozen=True)
@@ -566,10 +567,12 @@ def check_expiring_calls(portfolio: Portfolio, policy: DeltaPolicy = DeltaPolicy
             if delta_call and "strike" in delta_call:
                 target_strike = float(delta_call["strike"])
         
-        target_expiry = (today + timedelta(days=40)).strftime("%Y-%m-%d")
+        target_expiry_dt = today + timedelta(days=40)
+        target_expiry = target_expiry_dt.strftime("%Y-%m-%d")
         delta_reason = "; ".join(delta_explain.get("reasons", [f"Δ={target_delta:.2f}"]))
         
-        return Trade(
+        # Build the trade recommendation with all details
+        trade = Trade(
             recommendation="ROLL_CALL",
             underlying=call["symbol"],
             action=f"BUY {call['quantity']} @ ${old_strike} / SELL {call['quantity']} @ ${target_strike:.2f} (exp {target_expiry})",
@@ -578,6 +581,18 @@ def check_expiring_calls(portfolio: Portfolio, policy: DeltaPolicy = DeltaPolicy
             expected_return=0.12,
             valid=True,
         )
+        
+        # Attach roll executor metadata for later execution
+        trade.roll_metadata = {
+            "old_strike": old_strike,
+            "old_expiry": call["expiry"],
+            "new_strike": target_strike,
+            "new_expiry": target_expiry,
+            "quantity": call["quantity"],
+            "target_delta": target_delta,
+        }
+        
+        return trade
     
     return None
 
@@ -740,6 +755,19 @@ def main():
         print(f"\nConflicts detected:")
         for conflict in trade.conflicts:
             print(f"  ⚠️  {conflict}")
+    
+    # If this is a roll, show execution instructions
+    if trade.roll_metadata:
+        meta = trade.roll_metadata
+        print(f"\n📋 EXECUTION INSTRUCTIONS (Roll)")
+        print(f"  1. Open Schwab web/mobile: {trade.underlying} options")
+        print(f"  2. Create a spread order (or two GTC orders):")
+        print(f"     BUY-TO-CLOSE:  {meta['quantity']} {trade.underlying} ${meta['old_strike']} calls @ {meta['old_expiry']}")
+        print(f"     SELL-TO-OPEN:  {meta['quantity']} {trade.underlying} ${meta['new_strike']:.2f} calls @ {meta['new_expiry']}")
+        print(f"  3. Target net credit: match current bid-ask spreads")
+        print(f"  4. Post in Schwab until filled or 5-10min window expires")
+        print(f"  5. Confirm fill against portfolio before market close")
+    
     print("=" * 70)
 
     # Output as JSON for automation
@@ -753,6 +781,8 @@ def main():
         "expected_return": trade.expected_return,
         "conflicts": trade.conflicts,
     }
+    if trade.roll_metadata:
+        result["roll_metadata"] = trade.roll_metadata
     print(json.dumps(result, indent=2))
     
     sys.exit(0 if trade.valid else 1)
